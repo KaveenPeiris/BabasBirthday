@@ -363,51 +363,72 @@ envelope.addEventListener('click', ()=>{
   startMusic();
 });
 
-/* ---------------- Background music (YouTube embed) ----------------
-   Streams directly from YouTube's own player rather than hosting any
-   audio file here. Video: Indila - Love Story
-   https://www.youtube.com/watch?v=DF3XjEhJ40Y                       */
-const YT_VIDEO_ID = 'DF3XjEhJ40Y';
-let ytPlayer = null;
-let ytReady = false;
-let musicWanted = false;
+/* ---------------- Background music (local synth fallback) ---------------- */
+let audioCtx = null;
+let gainNode = null;
+let melodyTimer = null;
+let musicOn = false;
 const musicToggle = document.getElementById('musicToggle');
+const melodyNotes = [261.63, 329.63, 392.0, 329.63, 349.23, 293.66, 261.63, 293.66];
 
-const ytScript = document.createElement('script');
-ytScript.src = 'https://www.youtube.com/iframe_api';
-document.head.appendChild(ytScript);
-
-window.onYouTubeIframeAPIReady = function(){
-  ytPlayer = new YT.Player('yt-player', {
-    videoId: YT_VIDEO_ID,
-    playerVars: { autoplay:0, controls:0, disablekb:1, playsinline:1, loop:1, playlist:YT_VIDEO_ID },
-    events:{
-      onReady: ()=>{
-        ytReady = true;
-        if(musicWanted) actuallyPlay();
-      },
-      onStateChange: (e)=>{
-        if(e.data === YT.PlayerState.PLAYING){ musicToggle.classList.add('playing'); }
-        if(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED){ musicToggle.classList.remove('playing'); }
-      }
-    }
-  });
-};
-
-function actuallyPlay(){
-  try{ ytPlayer.setVolume(55); ytPlayer.playVideo(); }catch(err){}
+function ensureAudioContext(){
+  if(!audioCtx){
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if(!AudioCtor) return null;
+    audioCtx = new AudioCtor();
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = 0.04;
+    gainNode.connect(audioCtx.destination);
+  }
+  if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
+  return audioCtx;
 }
+
+function playTone(freq, duration = 0.22){
+  if(!audioCtx || !gainNode) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.5, audioCtx.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(gainNode);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration + 0.02);
+}
+
+function scheduleMelody(){
+  let step = 0;
+  melodyTimer = setInterval(()=>{
+    if(!musicOn){ return; }
+    const freq = melodyNotes[step % melodyNotes.length];
+    playTone(freq, 0.26);
+    step++;
+  }, 340);
+}
+
+function stopMusic(){
+  musicOn = false;
+  musicToggle.classList.remove('playing');
+  if(melodyTimer){ clearInterval(melodyTimer); melodyTimer = null; }
+}
+
 function startMusic(){
-  musicWanted = true;
-  if(ytReady) actuallyPlay();
+  const ctx = ensureAudioContext();
+  if(!ctx) return;
+  musicOn = true;
+  musicToggle.classList.add('playing');
+  if(!melodyTimer){ scheduleMelody(); }
+  playTone(261.63, 0.28);
 }
+
 musicToggle.addEventListener('click', ()=>{
-  if(!ytReady){ startMusic(); return; }
-  const state = ytPlayer.getPlayerState();
-  if(state === YT.PlayerState.PLAYING){
-    ytPlayer.pauseVideo();
+  if(musicOn){
+    stopMusic();
   } else {
-    actuallyPlay();
+    startMusic();
   }
 });
 
@@ -498,15 +519,18 @@ let currentIdx = 0;
 function makeFrame(i){
   const frame = document.createElement('div');
   const photo = MEMORY_PHOTOS[i];
+  const captionText = photo && photo.caption ? photo.caption : 'our moment';
+
   if(photo && photo.src){
     frame.className = 'frame';
-    frame.innerHTML = `<img src="${photo.src}" alt="memory"><span class="cap" contenteditable="true" spellcheck="false">${photo.caption}</span>`;
+    frame.innerHTML = `<img src="${photo.src}" alt="memory"><span class="cap" contenteditable="true" spellcheck="false">${captionText}</span>`;
     frame.addEventListener('click', (ev2)=>{ if(ev2.target.tagName!=='SPAN'){ currentIdx=i; openModal(); } });
     frame.querySelector('.cap').addEventListener('click', e=>e.stopPropagation());
     return frame;
   }
+
   frame.className = 'frame empty';
-  frame.innerHTML = `+
+  frame.innerHTML = `
     <input type="file" accept="image/*">
     <span class="cap" contenteditable="true" spellcheck="false">add a memory</span>`;
   const input = frame.querySelector('input');
